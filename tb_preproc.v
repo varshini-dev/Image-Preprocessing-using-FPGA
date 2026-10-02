@@ -64,6 +64,33 @@ module tb_preproc;
         end
     endtask
 
+    // ---------- novelty: bounding-box block ----------
+    wire [7:0] xmin, xmax, ymin, ymax; wire found, fdone;
+    edge_bbox #(.W_OUT(OW-2), .H_OUT(OH-2)) u_bbox (.clk(clk), .rst_n(rst_n), .edge_valid(ev), .edge_pix(ep),
+        .xmin(xmin), .xmax(xmax), .ymin(ymin), .ymax(ymax), .found(found), .frame_done(fdone));
+    integer gx0, gx1, gy0, gy1, kk, bb_err = 0;
+    task golden_bbox;
+        begin
+            gx0 = 999; gx1 = -1; gy0 = 999; gy1 = -1;
+            for (kk = 0; kk < NOUT; kk = kk + 1)
+                if (gold[kk] != 0) begin
+                    if ((kk % (OW-2)) < gx0) gx0 = kk % (OW-2);
+                    if ((kk % (OW-2)) > gx1) gx1 = kk % (OW-2);
+                    if ((kk / (OW-2)) < gy0) gy0 = kk / (OW-2);
+                    if ((kk / (OW-2)) > gy1) gy1 = kk / (OW-2);
+                end
+            $display("Golden bbox: x %0d..%0d  y %0d..%0d", gx0, gx1, gy0, gy1);
+        end
+    endtask
+    task check_bbox(input integer frame);
+        begin
+            $display("Frame %0d DUT bbox: x %0d..%0d  y %0d..%0d found=%b", frame, xmin, xmax, ymin, ymax, found);
+            if (xmin !== gx0 || xmax !== gx1 || ymin !== gy0 || ymax !== gy1 || !found) begin
+                bb_err = bb_err + 1; $display("BBOX MISMATCH on frame %0d", frame);
+            end
+        end
+    endtask
+
     // ---------- monitor ----------
     integer out_idx = 0, errors = 0, fd;
     always @(posedge clk) if (ev) begin
@@ -79,15 +106,18 @@ module tb_preproc;
     initial begin
         fd = $fopen("edge_out.txt", "w");
         build_golden;
+        golden_bbox;
         $display("Golden edge pixels per frame = %0d of %0d", n_edge_gold, NOUT);
         repeat (5) @(posedge clk); rst_n <= 1; repeat (3) @(posedge clk);
         send_frame(0);
         repeat (50) @(posedge clk);
+        check_bbox(1);
         send_frame(1);
         repeat (200) @(posedge clk);
+        check_bbox(2);
         $fclose(fd);
-        if (out_idx == 2*NOUT && errors == 0) $display("PASS: %0d output pixels matched golden model", out_idx);
-        else $display("FAIL: outputs=%0d (expected %0d), errors=%0d", out_idx, 2*NOUT, errors);
+        if (out_idx == 2*NOUT && errors == 0 && bb_err == 0) $display("PASS: %0d output pixels and the bounding box matched the golden model", out_idx);
+        else $display("FAIL: outputs=%0d (expected %0d), errors=%0d bbox_errors=%0d", out_idx, 2*NOUT, errors, bb_err);
         $finish;
     end
 endmodule
